@@ -396,6 +396,15 @@ class NaverNewsCollector:
             result += f"  • {industry}: {count}개\n"
         
         return result
+    
+    # 호환성을 위한 기존 메소드명 유지
+    def collect_all_news(self, news_per_keyword: int = 2) -> List[Dict]:
+        """기존 호환성을 위한 메소드 (collect_news_by_industry 호출)"""
+        return self.collect_news_by_industry(news_per_industry=2)
+    
+    def filter_and_rank_news(self, news_list: List[Dict], top_n: int = 14) -> List[Dict]:
+        """기존 호환성을 위한 메소드 (get_balanced_news 호출)"""
+        return self.get_balanced_news(news_list)
 
 class NaverNewsFormatter:
     """네이버 뉴스를 카카오톡 메시지로 포맷팅"""
