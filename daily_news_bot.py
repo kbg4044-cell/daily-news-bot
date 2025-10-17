@@ -23,7 +23,7 @@ class DailyNewsBot:
         # 환경 변수에서 API 키 로드
         self.naver_client_id = os.getenv('NAVER_CLIENT_ID', 'i_ExQRquc2oFsTFDyLoz')
         self.naver_client_secret = os.getenv('NAVER_CLIENT_SECRET', 'eJpNFD4w1Z')
-        self.gemini_api_key = os.getenv('GEMINI_API_KEY', 'AIzaSyC6PwRGM88TmMP2qjvyEFsCc_-SJbmAyQU')
+        self.gemini_api_key = os.getenv('GEMINI_API_KEY', 'YOUR_KAKAO_API_KEY_HERE')
         self.kakao_api_key = os.getenv('KAKAO_API_KEY', 'YOUR_KAKAO_API_KEY_HERE')
         
         # 각 모듈 초기화
