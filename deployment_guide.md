@@ -69,7 +69,7 @@ NAVER_CLIENT_SECRET
 Value: eJpNFD4w1Z
 
 GEMINI_API_KEY
-Value: AIzaSyC6PwRGM88TmMP2qjvyEFsCc_-SJbmAyQU
+Value: your API Key
 
 # 나중에 받을 카카오 API 키
 KAKAO_API_KEY
