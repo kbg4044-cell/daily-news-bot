@@ -11,14 +11,26 @@ class KakaoBusinessSender:
         # 카카오 비즈니스 API 설정
         self.app_key = app_key or os.getenv('KAKAO_API_KEY', 'YOUR_KAKAO_API_KEY_HERE')
         
-        # Access Token (환경 변수에서 읽기) - 더 명확하게
-        self.access_token = os.environ.get('KAKAO_ACCESS_TOKEN')
+        # Access Token - 여러 방법으로 시도
+        self.access_token = (
+            os.environ.get('KAKAO_ACCESS_TOKEN') or 
+            os.getenv('KAKAO_ACCESS_TOKEN') or 
+            None
+        )
         
-        # 디버깅용 출력
+        # 디버깅: 환경 변수 확인
+        print("🔍 환경 변수 디버깅:")
+        print(f"   KAKAO_API_KEY 존재: {'KAKAO_API_KEY' in os.environ}")
+        print(f"   KAKAO_ACCESS_TOKEN 존재: {'KAKAO_ACCESS_TOKEN' in os.environ}")
+        
         if self.access_token:
-            print(f"✅ Access Token 로드됨: {self.access_token[:20]}...")
+            print(f"✅ Access Token 로드 성공: {self.access_token[:30]}...")
         else:
-            print("❌ Access Token이 환경 변수에 없습니다")
+            print("❌ Access Token을 찾을 수 없습니다")
+            print("   환경 변수 목록:")
+            for key in os.environ.keys():
+                if 'KAKAO' in key:
+                    print(f"   - {key}")
         
         # API 엔드포인트
         self.auth_url = "https://kauth.kakao.com/oauth/token"
@@ -26,13 +38,13 @@ class KakaoBusinessSender:
         self.friend_url = "https://kapi.kakao.com/v1/api/talk/friends"
         
     def get_access_token(self):
-        """OAuth 액세스 토큰 획득"""
-        # 환경 변수에서 Access Token 사용
+        """OAuth 액세스 토큰 확인"""
         if self.access_token:
-            print("✅ Access Token이 환경 변수에서 로드되었습니다")
+            print("✅ Access Token이 설정되어 있습니다")
             return True
         else:
             print("⚠️ Access Token이 설정되지 않았습니다")
+            print("💡 GitHub Secrets에 KAKAO_ACCESS_TOKEN을 등록하세요")
             return False
     
     def send_message_to_me(self, message: str) -> bool:
@@ -85,22 +97,16 @@ class KakaoBusinessSender:
             "total_count": 0
         }
         
-        # 테스트 모드에서는 구독자 목록 시뮬레이션
-        if not subscriber_list:
-            subscriber_list = ["test_user_1", "test_user_2", "test_user_3"]
+        # 나에게만 발송
+        results["total_count"] = 1
         
-        results["total_count"] = len(subscriber_list)
+        print(f"📢 나에게 메시지 발송 중...")
         
-        print(f"📢 {len(subscriber_list)}명의 구독자에게 메시지 발송 시작...")
-        
-        for i, subscriber in enumerate(subscriber_list, 1):
-            print(f"  📱 {i}/{len(subscriber_list)} 발송 중: {subscriber}")
-            
-            # 실제로는 나에게 발송 (테스트용)
-            if self.send_message_to_me(message):
-                results["success_count"] += 1
-            else:
-                results["fail_count"] += 1
+        # 나에게 발송
+        if self.send_message_to_me(message):
+            results["success_count"] = 1
+        else:
+            results["fail_count"] = 1
         
         print(f"✅ 발송 완료: 성공 {results['success_count']}명, 실패 {results['fail_count']}명")
         return results
@@ -120,7 +126,7 @@ class KakaoBusinessSender:
             print("💡 GitHub Secrets에 KAKAO_ACCESS_TOKEN을 등록하세요")
             return False
         else:
-            print(f"✅ Access Token이 설정되었습니다: {self.access_token[:20]}...")
+            print(f"✅ Access Token이 설정되었습니다: {self.access_token[:30]}...")
             return True
 
 class NewsMessageFormatter:
@@ -227,20 +233,12 @@ if __name__ == "__main__":
     # 샘플 뉴스 데이터
     sample_news = [
         {
-            "title": "삼성전자, 2025년 신입사원 대규모 채용 발표",
+            "title": "삼성전자, 2025년 신입사원 대규모 채용",
             "category": "취업/고용",
-            "description": "삼성전자가 내년 상반기 신입사원을 대규모로 채용한다고 발표했습니다.",
+            "description": "삼성전자가 내년 상반기 신입사원을 대규모로 채용합니다.",
             "link": "https://example.com/news1",
             "pubDate": "10-14 08:00",
             "importance_score": 9
-        },
-        {
-            "title": "AI 스타트업 투자 급증, 올해 전년 대비 200% 증가",
-            "category": "IT/기술", 
-            "description": "올해 AI 관련 스타트업에 대한 투자가 전년 대비 200% 증가했습니다.",
-            "link": "https://example.com/news2",
-            "pubDate": "10-14 07:30",
-            "importance_score": 8
         }
     ]
     
@@ -251,13 +249,4 @@ if __name__ == "__main__":
     # 메시지 길이 체크
     length_check = formatter.check_message_length(message)
     
-    # 메시지 미리보기
-    print("\n📱 생성된 메시지:")
-    print("=" * 50)
-    print(message)
-    print("=" * 50)
-    
     print("\n✅ 카카오톡 발송 시스템 준비 완료!")
-    print("💡 실제 발송을 위해서는 GitHub Secrets에 다음을 등록하세요:")
-    print("   - KAKAO_API_KEY: REST API 키")
-    print("   - KAKAO_ACCESS_TOKEN: OAuth Access Token")
