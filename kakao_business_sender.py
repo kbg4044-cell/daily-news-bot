@@ -11,8 +11,14 @@ class KakaoBusinessSender:
         # 카카오 비즈니스 API 설정
         self.app_key = app_key or os.getenv('KAKAO_API_KEY', 'YOUR_KAKAO_API_KEY_HERE')
         
-        # Access Token (환경 변수에서 읽기)
-        self.access_token = os.getenv('KAKAO_ACCESS_TOKEN', None)
+        # Access Token (환경 변수에서 읽기) - 더 명확하게
+        self.access_token = os.environ.get('KAKAO_ACCESS_TOKEN')
+        
+        # 디버깅용 출력
+        if self.access_token:
+            print(f"✅ Access Token 로드됨: {self.access_token[:20]}...")
+        else:
+            print("❌ Access Token이 환경 변수에 없습니다")
         
         # API 엔드포인트
         self.auth_url = "https://kauth.kakao.com/oauth/token"
