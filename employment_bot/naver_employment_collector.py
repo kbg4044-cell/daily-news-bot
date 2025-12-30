@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-고용뉴스 수집기 - 중복 제거 강화
+고용뉴스 수집기 - 중복 제거 초강화 버전
 """
 
 import requests
 from datetime import datetime, timedelta
 from typing import List, Dict
-import hashlib
+import re
 
 class NaverEmploymentCollector:
-    """고용뉴스 전문 수집기 (중복 제거 강화)"""
+    """고용뉴스 전문 수집기 (중복 제거 초강화)"""
     
     def __init__(self, client_id: str, client_secret: str):
         self.client_id = client_id
@@ -26,12 +26,6 @@ class NaverEmploymentCollector:
     def collect_unique_news(self, count: int = 30) -> List[Dict]:
         """
         중복 제거된 고용뉴스 수집
-        
-        Args:
-            count: 수집할 개수
-            
-        Returns:
-            중복이 제거된 뉴스 리스트
         """
         
         all_news = []
@@ -53,8 +47,8 @@ class NaverEmploymentCollector:
         unique_by_url = self._remove_duplicates_by_url(all_news)
         print(f"  URL 중복 제거 후: {len(unique_by_url)}개")
         
-        # 2단계: 제목 유사도 기반 중복 제거
-        unique_by_title = self._remove_duplicates_by_title(unique_by_url)
+        # 2단계: 제목 핵심 키워드 기반 중복 제거 (강화!)
+        unique_by_title = self._remove_duplicates_by_title_v2(unique_by_url)
         print(f"  제목 중복 제거 후: {len(unique_by_title)}개")
         
         # 3단계: 날짜 필터링
@@ -99,7 +93,6 @@ class NaverEmploymentCollector:
         unique_news = []
         
         for news in news_list:
-            # 원본 URL과 정규화된 URL 모두 체크
             link = news.get('link', '')
             
             # URL 정규화 (파라미터 제거)
@@ -111,8 +104,11 @@ class NaverEmploymentCollector:
         
         return unique_news
     
-    def _remove_duplicates_by_title(self, news_list: List[Dict]) -> List[Dict]:
-        """제목 유사도 기반 중복 제거"""
+    def _remove_duplicates_by_title_v2(self, news_list: List[Dict]) -> List[Dict]:
+        """
+        제목 기반 중복 제거 - 강화 버전
+        핵심 키워드 추출 방식 개선
+        """
         
         seen_signatures = set()
         unique_news = []
@@ -120,41 +116,75 @@ class NaverEmploymentCollector:
         for news in news_list:
             title = self._clean_title(news.get('title', ''))
             
-            # 제목 시그니처 생성 (핵심 단어만 추출)
-            signature = self._create_title_signature(title)
+            # 핵심 키워드 시그니처 생성 (개선!)
+            signature = self._create_enhanced_signature(title)
             
             if signature and signature not in seen_signatures:
                 seen_signatures.add(signature)
                 unique_news.append(news)
+            else:
+                # 디버그: 중복 제거된 항목 출력
+                print(f"    🔄 중복 제거: {title[:30]}...")
         
         return unique_news
     
-    def _create_title_signature(self, title: str) -> str:
-        """제목에서 핵심 단어로 시그니처 생성"""
+    def _create_enhanced_signature(self, title: str) -> str:
+        """
+        향상된 시그니처 생성
         
-        import re
+        핵심 아이디어:
+        1. 숫자 추출 (예: 820명, 200명)
+        2. 회사명 추출 (예: 서울교통공사, 현대중공업)
+        3. 핵심 단어 추출 (채용, 수주, 투자)
+        """
         
         # HTML 태그 제거
         title = re.sub(r'<[^>]+>', '', title)
+        title = title.replace('&quot;', '"').replace('&apos;', "'").replace('&amp;', '&')
         
-        # 특수문자 제거
-        title = re.sub(r'[^\w\s]', '', title)
+        # 1. 숫자 추출 (채용 인원, 금액 등)
+        numbers = re.findall(r'\d+(?:만|명|억|조)?', title)
         
-        # 공백 정규화
-        title = ' '.join(title.split())
+        # 2. 회사명 추출 (주요 기업명 패턴)
+        companies = []
+        company_keywords = [
+            '현대', '삼성', '엘지', 'LG', 'SK', '포스코', '한화',
+            '네이버', '카카오', '쿠팡', '배민', '토스',
+            '교통공사', '전력공사', '수자원공사', '도로공사',
+            '건설', '중공업', '전자', '화학', '금융', '은행'
+        ]
         
-        # 핵심 단어만 추출 (3글자 이상)
-        words = [w for w in title.split() if len(w) >= 3]
+        for keyword in company_keywords:
+            if keyword in title:
+                companies.append(keyword)
         
-        # 상위 5개 단어로 시그니처
-        signature = ' '.join(sorted(words[:5]))
+        # 3. 핵심 행위 추출
+        actions = []
+        action_keywords = ['채용', '모집', '선발', '입사', '구인', '수주', '투자', '확대', '증원']
+        
+        for keyword in action_keywords:
+            if keyword in title:
+                actions.append(keyword)
+        
+        # 시그니처 생성: 회사명 + 숫자 + 행위
+        signature_parts = []
+        
+        if companies:
+            signature_parts.extend(sorted(companies)[:2])  # 상위 2개
+        
+        if numbers:
+            signature_parts.extend(sorted(numbers)[:2])  # 상위 2개
+        
+        if actions:
+            signature_parts.extend(sorted(actions)[:2])  # 상위 2개
+        
+        # 최종 시그니처
+        signature = '_'.join(signature_parts)
         
         return signature.lower()
     
     def _clean_title(self, title: str) -> str:
         """제목 정리"""
-        
-        import re
         
         # HTML 태그 제거
         title = re.sub(r'<[^>]+>', '', title)
