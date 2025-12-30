@@ -1,384 +1,169 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-네이버 뉴스 수집기 - 산업별 버전
-- 7개 주요 산업별 수집
-- 100+ 대기업 키워드
-- 중요도 점수 기반 선별
+네이버 뉴스 수집기 - 고용/채용/취업 전문
 """
 
-import os
 import requests
-import re
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional
-from html import unescape
+from typing import List, Dict
 
 class NaverNewsCollector:
-    """네이버 뉴스 API 수집기"""
+    """네이버 뉴스 API를 사용한 고용/채용 뉴스 수집기"""
     
-    def __init__(self):
-        self.client_id = os.getenv('NAVER_CLIENT_ID')
-        self.client_secret = os.getenv('NAVER_CLIENT_SECRET')
+    def __init__(self, client_id: str, client_secret: str):
+        self.client_id = client_id
+        self.client_secret = client_secret
         self.base_url = "https://openapi.naver.com/v1/search/news.json"
         
-        if not self.client_id or not self.client_secret:
-            raise ValueError("❌ 네이버 API 키가 설정되지 않았습니다!")
+        # 고용/채용/취업 관련 키워드
+        self.employment_keywords = [
+            '채용', '신입사원', '경력직', '구인', '일자리',
+            '취업', '고용', '인력', '직원모집', '리크루팅',
+            '채용공고', '입사', '면접', '인재채용', '대규모채용',
+            '청년채용', '공채', '수시채용', '헤드헌팅', '이직'
+        ]
+    
+    def collect_employment_news(self, count: int = 20) -> List[Dict]:
+        """
+        고용/채용 관련 뉴스 수집
         
-        self.headers = {
+        Args:
+            count: 수집할 뉴스 개수 (기본 20개)
+            
+        Returns:
+            뉴스 리스트 (최신순)
+        """
+        
+        all_news = []
+        
+        # 여러 키워드로 검색
+        main_keywords = ['채용', '고용', '취업', '일자리', '신입사원']
+        
+        for keyword in main_keywords:
+            try:
+                news = self._search_news(keyword, display=10)
+                all_news.extend(news)
+            except Exception as e:
+                print(f"⚠️ '{keyword}' 검색 실패: {e}")
+                continue
+        
+        # 중복 제거 (링크 기준)
+        unique_news = self._remove_duplicates(all_news)
+        
+        # 최신순 정렬
+        sorted_news = sorted(
+            unique_news,
+            key=lambda x: x.get('pubDate', ''),
+            reverse=True
+        )
+        
+        # 날짜 필터링 (최근 3일 이내)
+        filtered_news = self._filter_by_date(sorted_news, days=3)
+        
+        # 관련도 점수 계산 및 정렬
+        scored_news = self._calculate_relevance_score(filtered_news)
+        
+        return scored_news[:count]
+    
+    def _search_news(self, query: str, display: int = 10) -> List[Dict]:
+        """네이버 뉴스 API 검색"""
+        
+        headers = {
             'X-Naver-Client-Id': self.client_id,
             'X-Naver-Client-Secret': self.client_secret
         }
         
-        # 대기업 키워드 (100+개)
-        self.major_companies = [
-            # 삼성그룹
-            '삼성전자', '삼성디스플레이', '삼성SDI', '삼성바이오로직스', '삼성물산',
-            '삼성생명', '삼성화재', '삼성증권', '삼성카드', '삼성웰스토리',
-            
-            # SK그룹
-            'SK하이닉스', 'SK이노베이션', 'SK텔레콤', 'SK브로드밴드', 'SKC',
-            'SK네트웍스', 'SK에너지', 'SK케미칼', 'SK바이오팜', 'SK바이오사이언스',
-            
-            # 현대자동차그룹
-            '현대자동차', '기아', '현대모비스', '현대제철', '현대건설',
-            '현대엔지니어링', '현대위아', '현대글로비스', '현대로템', '현대오토에버',
-            
-            # LG그룹
-            'LG전자', 'LG화학', 'LG에너지솔루션', 'LG디스플레이', 'LG유플러스',
-            'LG생활건강', 'LG하우시스', 'LG이노텍', 'LG CNS', 'LG헬로비전',
-            
-            # 롯데그룹
-            '롯데케미칼', '롯데쇼핑', '롯데칠성', '롯데제과', '롯데푸드',
-            '롯데웰푸드', '롯데건설', '롯데렌탈', '롯데정보통신', '호텔롯데',
-            
-            # 포스코그룹
-            '포스코', '포스코인터내셔널', '포스코DX', '포스코케미칼', '포스코에너지',
-            
-            # 한화그룹
-            '한화솔루션', '한화에어로스페이스', '한화오션', '한화시스템', '한화생명',
-            '한화손해보험', '한화투자증권', '한화호텔앤드리조트',
-            
-            # 금융권
-            'KB금융', '신한금융', '하나금융', '우리금융', 'NH농협',
-            '카카오뱅크', '토스뱅크', '케이뱅크', '미래에셋증권', '삼성증권',
-            
-            # 통신/IT
-            '네이버', '카카오', '엔씨소프트', '넷마블', '크래프톤',
-            '쿠팡', '배달의민족', '당근마켓', '토스', '라인',
-            
-            # 유통/식품
-            '신세계', '현대백화점', 'GS리테일', '이마트', '홈플러스',
-            '농심', 'CJ제일제당', '오뚜기', '삼양식품', '빙그레',
-            '매일유업', '동원F&B', '대상', '사조',
-            
-            # 건설/부동산
-            'GS건설', '대우건설', '대림산업', 'DL이앤씨', 'HDC현대산업개발',
-            '중흥건설', '코오롱글로벌', '태영건설',
-            
-            # 화학/소재
-            '한화솔루션', 'LG화학', '롯데케미칼', '금호석유화학', '효성화학',
-            'OCI', '코오롱인더스트리', '휴비스',
-            
-            # 항공/물류
-            '대한항공', '아시아나항공', '진에어', '티웨이항공', '제주항공',
-            'CJ대한통운', '한진', '현대글로비스',
-            
-            # 조선
-            '한국조선해양', '삼성중공업', '대우조선해양', 'HD현대중공업', 'HD한국조선해양',
-            
-            # 바이오/제약
-            '셀트리온', '삼성바이오로직스', 'SK바이오팜', '유한양행', '녹십자',
-            '대웅제약', '한미약품', '종근당', '일동제약', '동아에스티'
-        ]
-        
-        # 산업별 키워드
-        self.industry_keywords = {
-            '조선': [
-                '조선', '선박', '해양플랜트', 'LNG선', '컨테이너선',
-                '수주', '발주', '인도', '건조', '한국조선해양', '삼성중공업',
-                '대우조선해양', 'HD현대중공업', 'HD한국조선해양'
-            ],
-            '반도체': [
-                '반도체', '칩', '웨이퍼', 'D램', '낸드', 'NAND', 'SSD',
-                '파운드리', '삼성전자', 'SK하이닉스', '메모리', '시스템반도체',
-                '반도체장비', '반도체소재'
-            ],
-            '철강': [
-                '철강', '강판', '열연', '냉연', '후판', '스테인리스',
-                '포스코', '현대제철', '동국제강', '고로', '제철소'
-            ],
-            '금융': [
-                '은행', '증권', '보험', '자산운용', '카드', 'KB금융', '신한금융',
-                '하나금융', '우리금융', '카카오뱅크', '토스', 'IPO', '상장',
-                '대출', '예금', '펀드'
-            ],
-            '식품': [
-                '식품', '음료', '유통', '라면', '과자', '음료수',
-                '농심', 'CJ제일제당', '오뚜기', '롯데제과', '빙그레',
-                '매일유업', '삼양식품', '신제품', '출시'
-            ],
-            '건설': [
-                '건설', '아파트', '분양', '재개발', '재건축', '주택',
-                '현대건설', 'GS건설', '대우건설', '대림산업', 'DL이앤씨',
-                '수주', '착공', '입주'
-            ],
-            '바이오': [
-                '바이오', '제약', '신약', '임상', '의약품', '백신',
-                '셀트리온', '삼성바이오로직스', 'SK바이오팜', '유한양행',
-                '승인', '허가', '개발', '기술이전'
-            ]
-        }
-        
-        # 산업별 고중요도 키워드
-        self.industry_high_keywords = {
-            '조선': ['수주', '발주', '인도', '계약', '실적', '매출', '투자', '채용', '고용', '신입', '경력'],
-            '반도체': ['생산', '투자', '공급', '수요', '가격', '실적', '개발', '기술', '채용', '고용', '신입'],
-            '철강': ['생산', '가격', '수출', '투자', '실적', '원료', '수요', '채용', '고용'],
-            '금융': ['실적', '대출', '예금', '수익', '투자', '인수', '합병', '상장', '채용', '신입'],
-            '식품': ['출시', '론칭', '매출', '수출', '브랜드', '인수', '투자', '채용', '고용'],
-            '건설': ['수주', '분양', '개발', '투자', '매출', '해외', '프로젝트', '채용', '신입'],
-            '바이오': ['승인', '허가', '임상', '개발', '투자', '수출', '계약', '기술이전', '채용', '신입', '연구원']
-        }
-        
-        # 산업별 채용 관련 키워드
-        self.recruitment_keywords = {
-            '조선': ['대규모 수주', '생산 증가', '인력 확충', '공장 가동률', '수출 증가'],
-            '반도체': ['투자 확대', '생산 증설', '공장 신설', '개발 인력', 'R&D'],
-            '철강': ['생산 증가', '수출 확대', '공장 가동', '시장 확대'],
-            '금융': ['디지털 전환', '신규 사업', '사업 확장', '조직 확대'],
-            '식품': ['신제품 출시', '공장 증설', '해외 진출', '브랜드 확장'],
-            '건설': ['대형 프로젝트', '해외 수주', '사업 확장', '인프라'],
-            '바이오': ['신약 개발', '임상 확대', '연구 투자', 'CMO', 'CDMO']
-        }
-    
-    def clean_html_tags(self, text: str) -> str:
-        """HTML 태그 제거"""
-        text = re.sub(r'<[^>]+>', '', text)
-        text = unescape(text)
-        text = re.sub(r'\s+', ' ', text)
-        return text.strip()
-    
-    def parse_pub_date(self, pub_date: str) -> Optional[datetime]:
-        """발행일 파싱"""
-        try:
-            return datetime.strptime(pub_date, '%a, %d %b %Y %H:%M:%S %z')
-        except:
-            return None
-    
-    def is_recent_news(self, pub_date: str, hours: int = 48) -> bool:
-        """최근 뉴스 여부 확인"""
-        parsed_date = self.parse_pub_date(pub_date)
-        if not parsed_date:
-            return True
-        
-        now = datetime.now(parsed_date.tzinfo)
-        return (now - parsed_date).total_seconds() <= hours * 3600
-    
-    def search_news_by_keyword(self, keyword: str, display: int = 20) -> List[Dict]:
-        """키워드로 뉴스 검색"""
         params = {
-            'query': keyword,
+            'query': query,
             'display': display,
-            'sort': 'date'
+            'sort': 'date'  # 최신순
         }
         
-        try:
-            response = requests.get(self.base_url, headers=self.headers, params=params)
-            response.raise_for_status()
+        response = requests.get(
+            self.base_url,
+            headers=headers,
+            params=params,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
             data = response.json()
-            
-            news_list = []
-            for item in data.get('items', []):
-                if not self.is_recent_news(item.get('pubDate', '')):
-                    continue
-                
-                news_list.append({
-                    'title': self.clean_html_tags(item.get('title', '')),
-                    'description': self.clean_html_tags(item.get('description', '')),
-                    'link': item.get('link', ''),
-                    'pub_date': item.get('pubDate', ''),
-                    'keyword': keyword
-                })
-            
-            return news_list
-            
-        except Exception as e:
-            print(f"⚠️ 검색 실패 ({keyword}): {str(e)}")
-            return []
-    
-    def calculate_industry_importance_score(self, news_item: Dict, industry: str) -> int:
-        """산업별 중요도 점수 계산"""
-        score = 5  # 기본 점수
-        
-        content = (news_item.get('title', '') + ' ' + news_item.get('description', '')).lower()
-        
-        # 산업별 고중요도 키워드
-        high_keywords = self.industry_high_keywords.get(industry, [])
-        for keyword in high_keywords:
-            if keyword.lower() in content:
-                score += 3
-        
-        # 대기업 키워드
-        for company in self.major_companies:
-            if company in content:
-                score += 2
-                break
-        
-        # 숫자 포함 (실적, 금액 등)
-        if re.search(r'\d+', content):
-            score += 1
-        
-        # 액션 키워드
-        action_keywords = ['발표', '출시', '계약', '투자', '인수', '합병', '승인']
-        for keyword in action_keywords:
-            if keyword in content:
-                score += 1
-                break
-        
-        return score
-    
-    def generate_recruitment_point(self, news_item: Dict, industry: str) -> str:
-        """채용포인트 생성"""
-        content = (news_item.get('title', '') + ' ' + news_item.get('description', '')).lower()
-        
-        # 산업별 채용 키워드 확인
-        recruitment_keywords = self.recruitment_keywords.get(industry, [])
-        
-        for keyword in recruitment_keywords:
-            if keyword in content:
-                # 산업별 맞춤 채용포인트
-                if industry == '조선':
-                    return "대규모 수주로 인력 채용 확대 예상"
-                elif industry == '반도체':
-                    return "반도체 투자 확대로 신규 채용 증가 전망"
-                elif industry == '철강':
-                    return "생산 증가로 인력 수요 증가 예상"
-                elif industry == '금융':
-                    return "디지털 전환으로 IT/데이터 인력 채용"
-                elif industry == '식품':
-                    return "사업 확장으로 생산/영업 인력 모집"
-                elif industry == '건설':
-                    return "대형 프로젝트 수주로 건설 인력 수요"
-                elif industry == '바이오':
-                    return "연구개발 확대로 연구원 채용 증가"
-        
-        # 기본 채용포인트
-        if '채용' in content or '고용' in content or '신입' in content:
-            return "신규 채용 계획 발표"
-        elif '투자' in content:
-            return "투자 확대로 인력 확충 예상"
-        elif '확대' in content or '증설' in content:
-            return "사업 확대로 채용 기회 증가"
+            return data.get('items', [])
         else:
-            return "산업 성장으로 채용 기회 증대"
+            raise Exception(f"API 오류: {response.status_code}")
     
-    def select_top_news_for_industry(self, news_list: List[Dict], industry: str, top_n: int = 2) -> List[Dict]:
-        """산업별 상위 뉴스 선별"""
-        # 점수 계산
-        for news in news_list:
-            news['importance_score'] = self.calculate_industry_importance_score(news, industry)
-            news['industry'] = industry
-            news['recruitment_point'] = self.generate_recruitment_point(news, industry)
+    def _remove_duplicates(self, news_list: List[Dict]) -> List[Dict]:
+        """중복 뉴스 제거 (링크 기준)"""
         
-        # 중복 제거 (제목 앞 40자 기준)
-        unique_news = {}
-        for news in news_list:
-            title_key = news['title'][:40]
-            if title_key not in unique_news or news['importance_score'] > unique_news[title_key]['importance_score']:
-                unique_news[title_key] = news
-        
-        # 점수 순 정렬
-        sorted_news = sorted(unique_news.values(), key=lambda x: x['importance_score'], reverse=True)
-        
-        return sorted_news[:top_n]
-    
-    def collect_news_by_industry(self, news_per_industry: int = 2) -> List[Dict]:
-        """
-        산업별 뉴스 수집
-        
-        Args:
-            news_per_industry: 산업당 수집할 뉴스 개수
-        
-        Returns:
-            수집된 뉴스 리스트
-        """
-        all_news = []
-        
-        for industry, keywords in self.industry_keywords.items():
-            print(f"\n🔍 [{industry}] 수집 중...")
-            industry_news = []
-            
-            # 각 키워드로 검색
-            for keyword in keywords[:5]:  # 상위 5개 키워드만
-                news_list = self.search_news_by_keyword(keyword, display=10)
-                industry_news.extend(news_list)
-            
-            if industry_news:
-                # 상위 뉴스 선별
-                top_news = self.select_top_news_for_industry(industry_news, industry, news_per_industry)
-                all_news.extend(top_news)
-                print(f"   ✅ {len(top_news)}개 선별 완료")
-            else:
-                print(f"   ⚠️ 뉴스 없음")
-        
-        return all_news
-
-class NaverNewsFormatter:
-    """뉴스 포맷터"""
-    
-    @staticmethod
-    def format_daily_news(news_list: List[Dict]) -> str:
-        """
-        일간 뉴스 포맷팅 (새 형식)
-        
-        [산업]
-        "뉴스 제목"
-        링크: https://...
-        채용포인트: ...
-        """
-        today = datetime.now().strftime('%m월 %d일')
-        message = f"📰 산업뉴스 ({today})\n"
-        message += "━" * 30 + "\n\n"
+        seen_links = set()
+        unique_news = []
         
         for news in news_list:
-            industry = news.get('industry', '기타')
-            title = news.get('title', '제목없음')
             link = news.get('link', '')
-            recruitment_point = news.get('recruitment_point', '채용 기회 증가 예상')
-            
-            # 제목 길이 제한
-            if len(title) > 40:
-                title = title[:37] + "..."
-            
-            message += f"[{industry}]\n"
-            message += f'"{title}"\n'
-            message += f"링크: {link}\n"
-            message += f"채용포인트: {recruitment_point}\n\n"
+            if link and link not in seen_links:
+                seen_links.add(link)
+                unique_news.append(news)
         
-        # 푸터
-        message += "━" * 30 + "\n"
-        message += "⏰ 매일 오전 8시 발송\n"
-        message += f"📊 총 {len(news_list)}개 산업뉴스"
+        return unique_news
+    
+    def _filter_by_date(self, news_list: List[Dict], days: int = 3) -> List[Dict]:
+        """최근 N일 이내 뉴스만 필터링"""
         
-        return message
-
-def test_collector():
-    """테스트 실행"""
-    print("\n" + "="*70)
-    print("🧪 네이버 뉴스 수집기 테스트")
-    print("="*70)
+        cutoff_date = datetime.now() - timedelta(days=days)
+        filtered = []
+        
+        for news in news_list:
+            pub_date_str = news.get('pubDate', '')
+            
+            try:
+                # pubDate 형식: "Mon, 30 Dec 2024 09:00:00 +0900"
+                pub_date = datetime.strptime(
+                    pub_date_str,
+                    '%a, %d %b %Y %H:%M:%S %z'
+                )
+                
+                # 시간대 정보 제거하고 비교
+                pub_date_naive = pub_date.replace(tzinfo=None)
+                
+                if pub_date_naive >= cutoff_date:
+                    filtered.append(news)
+                    
+            except Exception:
+                # 날짜 파싱 실패 시 포함
+                filtered.append(news)
+        
+        return filtered
     
-    collector = NaverNewsCollector()
-    news_list = collector.collect_news_by_industry(news_per_industry=2)
-    
-    print(f"\n📊 총 수집: {len(news_list)}개")
-    
-    # 포맷팅
-    message = NaverNewsFormatter.format_daily_news(news_list)
-    print("\n" + "="*70)
-    print("📝 카카오톡 메시지 미리보기:")
-    print("="*70)
-    print(message)
-    print(f"\n메시지 길이: {len(message)}자")
-
-if __name__ == "__main__":
-    test_collector()
+    def _calculate_relevance_score(self, news_list: List[Dict]) -> List[Dict]:
+        """채용 관련도 점수 계산 및 정렬"""
+        
+        for news in news_list:
+            score = 0
+            title = news.get('title', '').lower()
+            description = news.get('description', '').lower()
+            content = f"{title} {description}"
+            
+            # 핵심 키워드 가중치
+            high_priority = ['채용', '구인', '일자리', '신입']
+            medium_priority = ['취업', '고용', '인력', '입사']
+            
+            for keyword in high_priority:
+                score += content.count(keyword) * 3
+            
+            for keyword in medium_priority:
+                score += content.count(keyword) * 2
+            
+            # 일반 키워드
+            for keyword in self.employment_keywords:
+                if keyword in content:
+                    score += 1
+            
+            news['relevance_score'] = score
+        
+        # 관련도 점수 순으로 정렬
+        return sorted(
+            news_list,
+            key=lambda x: x.get('relevance_score', 0),
+            reverse=True
+        )
