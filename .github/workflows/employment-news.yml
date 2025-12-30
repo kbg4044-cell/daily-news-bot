@@ -1,29 +1,30 @@
-name: Daily Employment News Bot
+name: Employment News Bot
 
 on:
   schedule:
     # 매일 오전 9시 (KST) = 자정 (UTC)
     - cron: '0 0 * * *'
-  workflow_dispatch:  # 수동 실행 가능
+  workflow_dispatch:
 
 jobs:
-  send-news:
+  send-employment-news:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout code
+    - name: Checkout
       uses: actions/checkout@v3
     
-    - name: Set up Python
+    - name: Setup Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
     
     - name: Install dependencies
       run: |
+        cd employment_bot
         pip install --quiet -r requirements.txt
     
-    - name: Run news bot
+    - name: Run employment news bot
       env:
         NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
         NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
@@ -31,4 +32,5 @@ jobs:
         KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
         KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
       run: |
-        python daily_news_bot.py
+        cd employment_bot
+        python daily_employment_news.py

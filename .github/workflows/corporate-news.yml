@@ -1,0 +1,36 @@
+name: Corporate News Bot
+
+on:
+  schedule:
+    # 매일 오전 8시 (KST) = 23시 전날 (UTC)
+    - cron: '0 23 * * *'
+  workflow_dispatch:
+
+jobs:
+  send-corporate-news:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        cd corporate_bot
+        pip install --quiet -r requirements.txt
+    
+    - name: Run corporate news bot
+      env:
+        NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+        NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
+        KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
+      run: |
+        cd corporate_bot
+        python daily_corporate_news.py
