@@ -1,133 +1,136 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-Gemini AI 뉴스 편집기
-- 뉴스 요약 및 인사이트 생성
-- API 오류 처리 및 폴백
+Gemini AI 뉴스 편집기 - 채용포인트 생성
 """
 
-import os
+import google.generativeai as genai
+from typing import List, Dict
 import time
-from typing import Dict, List
-try:
-    import google.generativeai as genai
-except ImportError:
-    genai = None
 
 class GeminiNewsEditor:
-    """Gemini AI 기반 뉴스 편집기"""
+    """Gemini AI를 사용한 뉴스 편집 및 채용포인트 생성"""
     
-    def __init__(self):
-        self.api_key = os.getenv('GEMINI_API_KEY')
-        
-        if not self.api_key:
-            raise ValueError("❌ GEMINI_API_KEY가 설정되지 않았습니다!")
-        
-        if genai is None:
-            raise ImportError("❌ google-generativeai 패키지가 설치되지 않았습니다!")
-        
-        genai.configure(api_key=self.api_key)
+    def __init__(self, api_key: str):
+        genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
     
-    def edit_single_news(self, news_item: Dict) -> Dict:
+    def format_news_with_recruitment_point(self, news_list: List[Dict]) -> List[Dict]:
         """
-        단일 뉴스 편집
+        각 뉴스에 채용포인트 추가
         
         Args:
-            news_item: 뉴스 데이터
+            news_list: 원본 뉴스 리스트
+            
+        Returns:
+            채용포인트가 추가된 뉴스 리스트
+        """
+        
+        formatted_news = []
+        
+        for i, news in enumerate(news_list, 1):
+            try:
+                print(f"  [{i}/{len(news_list)}] AI 분석 중...", end=" ")
+                
+                # 채용포인트 생성
+                recruitment_point = self._generate_recruitment_point(news)
+                
+                # 원본 데이터에 채용포인트 추가
+                formatted = {
+                    'title': self._clean_html(news.get('title', '')),
+                    'link': news.get('link', ''),
+                    'description': self._clean_html(news.get('description', '')),
+                    'pubDate': news.get('pubDate', ''),
+                    'recruitment_point': recruitment_point
+                }
+                
+                formatted_news.append(formatted)
+                print("✓")
+                
+                # API 호출 제한 대응 (0.5초 대기)
+                time.sleep(0.5)
+                
+            except Exception as e:
+                print(f"⚠️ 오류: {e}")
+                # 실패 시 원본 데이터 사용 (채용포인트 없음)
+                formatted_news.append({
+                    'title': self._clean_html(news.get('title', '')),
+                    'link': news.get('link', ''),
+                    'description': self._clean_html(news.get('description', '')),
+                    'pubDate': news.get('pubDate', ''),
+                    'recruitment_point': ''
+                })
+        
+        return formatted_news
+    
+    def _generate_recruitment_point(self, news: Dict) -> str:
+        """
+        뉴스 내용을 분석해 채용포인트 생성
         
         Returns:
-            편집된 뉴스 (요약, 인사이트 추가)
+            한 줄 채용포인트 (30자 이내)
         """
-        title = news_item.get('title', '')
-        description = news_item.get('description', '')
-        industry = news_item.get('industry', '기타')
+        
+        title = self._clean_html(news.get('title', ''))
+        description = self._clean_html(news.get('description', ''))
         
         prompt = f"""
-다음 {industry} 산업 뉴스를 분석해주세요:
+다음 뉴스를 분석하여 채용/고용 관점에서 핵심 포인트를 한 줄로 요약하세요.
 
-제목: {title}
-내용: {description}
+뉴스 제목: {title}
+뉴스 내용: {description}
 
 요구사항:
-1. 핵심 내용을 50자 이내로 요약
-2. 산업에 미치는 영향을 30자 이내로 설명
+1. 채용/고용과 직접 관련된 인사이트 제공
+2. 30자 이내로 작성
+3. "~예상", "~전망" 등의 표현 사용
+4. 구체적인 숫자가 있으면 포함
 
-응답 형식:
-요약: [50자 이내 요약]
-영향: [30자 이내 영향 분석]
-"""
-        
+예시:
+- "대규모 수주로 신규 인력 채용 예상"
+- "실적 호조로 하반기 채용 규모 확대 전망"
+- "디지털 전환으로 IT 인력 수요 증가"
+
+채용포인트:"""
+
         try:
-            response = self.model.generate_content(prompt)
-            result = response.text.strip()
+            response = self.model.generate_content(
+                prompt,
+                generation_config={
+                    'temperature': 0.7,
+                    'max_output_tokens': 100,
+                }
+            )
             
-            # 파싱
-            lines = result.split('\n')
-            summary = ""
-            insight = ""
+            point = response.text.strip()
             
-            for line in lines:
-                if line.startswith('요약:'):
-                    summary = line.replace('요약:', '').strip()
-                elif line.startswith('영향:'):
-                    insight = line.replace('영향:', '').strip()
+            # 길이 제한
+            if len(point) > 40:
+                point = point[:37] + "..."
             
-            news_item['summary'] = summary[:50] if summary else description[:50]
-            news_item['insight'] = insight[:30] if insight else ""
-            
-            time.sleep(0.5)  # API 호출 제한 방지
+            return point
             
         except Exception as e:
-            print(f"⚠️ AI 편집 실패 (원본 사용): {str(e)}")
-            news_item['summary'] = description[:50]
-            news_item['insight'] = ""
-        
-        return news_item
+            print(f"AI 생성 실패: {e}")
+            return ""
     
-    def edit_news_batch(self, news_list: List[Dict]) -> List[Dict]:
-        """
-        뉴스 배치 편집
+    def _clean_html(self, text: str) -> str:
+        """HTML 태그 및 특수문자 제거"""
         
-        Args:
-            news_list: 뉴스 리스트
+        import re
         
-        Returns:
-            편집된 뉴스 리스트
-        """
-        edited_news = []
+        # HTML 태그 제거
+        text = re.sub(r'<[^>]+>', '', text)
         
-        for idx, news in enumerate(news_list, 1):
-            try:
-                edited = self.edit_single_news(news)
-                edited_news.append(edited)
-            except Exception as e:
-                print(f"⚠️ 뉴스 {idx} 편집 실패: {str(e)}")
-                edited_news.append(news)
+        # HTML 엔티티 변환
+        text = text.replace('&quot;', '"')
+        text = text.replace('&apos;', "'")
+        text = text.replace('&amp;', '&')
+        text = text.replace('&lt;', '<')
+        text = text.replace('&gt;', '>')
+        text = text.replace('&nbsp;', ' ')
         
-        return edited_news
-
-def test_editor():
-    """테스트 실행"""
-    print("\n" + "="*70)
-    print("🧪 Gemini AI 편집기 테스트")
-    print("="*70 + "\n")
-    
-    test_news = {
-        'title': '삼성전자, 3분기 영업이익 10조원 돌파',
-        'description': '삼성전자가 3분기 영업이익이 전년 대비 50% 증가한 10조원을 기록했다고 발표했다.',
-        'industry': '반도체'
-    }
-    
-    try:
-        editor = GeminiNewsEditor()
-        edited = editor.edit_single_news(test_news)
+        # 연속된 공백 제거
+        text = re.sub(r'\s+', ' ', text)
         
-        print("✅ 편집 완료!")
-        print(f"\n제목: {edited['title']}")
-        print(f"요약: {edited.get('summary', '')}")
-        print(f"영향: {edited.get('insight', '')}")
-        
-    except Exception as e:
-        print(f"❌ 테스트 실패: {str(e)}")
-
-if __name__ == "__main__":
-    test_editor()
+        return text.strip()
