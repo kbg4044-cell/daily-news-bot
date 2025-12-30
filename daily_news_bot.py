@@ -1,272 +1,176 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-산업뉴스봇 - 메인 실행 파일 (완전판)
-- PC 없이 GitHub Actions에서 완전 자동 실행
-- 카카오 토큰 자동 갱신
-- 매일 오전 8시 자동 발송
+고용/채용/취업 뉴스봇 - 메인 실행 스크립트
+매일 아침 9시 실행되어 고용 관련 뉴스 10개를 카카오톡으로 전송
 """
 
 import os
 import sys
+import json
 from datetime import datetime
-from typing import List, Dict
-import traceback
-
-# 자체 모듈 임포트
 from naver_news_collector import NaverNewsCollector
 from gemini_news_editor import GeminiNewsEditor
-from kakao_sender import KakaoTokenManager, KakaoMessageSender
-
-class DailyNewsBot:
-    """산업뉴스봇 메인 클래스"""
-    
-    def __init__(self):
-        print("\n" + "="*70)
-        print("📰 산업뉴스봇 시작")
-        print(f"⏰ 실행 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print("="*70 + "\n")
-        
-        # API 키 확인
-        self.validate_api_keys()
-        
-        # 모듈 초기화
-        self.news_collector = NaverNewsCollector()
-        self.news_editor = GeminiNewsEditor()
-        
-        # 카카오 토큰 관리자 & 발송자
-        try:
-            self.token_manager = KakaoTokenManager()
-            self.kakao_sender = KakaoMessageSender(self.token_manager)
-            self.kakao_enabled = True
-        except Exception as e:
-            print(f"⚠️ 카카오 초기화 실패 (테스트 모드): {str(e)}")
-            self.kakao_enabled = False
-    
-    def validate_api_keys(self):
-        """API 키 검증"""
-        required_keys = {
-            'NAVER_CLIENT_ID': os.getenv('NAVER_CLIENT_ID'),
-            'NAVER_CLIENT_SECRET': os.getenv('NAVER_CLIENT_SECRET'),
-            'GEMINI_API_KEY': os.getenv('GEMINI_API_KEY')
-        }
-        
-        optional_keys = {
-            'KAKAO_REST_API_KEY': os.getenv('KAKAO_REST_API_KEY'),
-            'KAKAO_REFRESH_TOKEN': os.getenv('KAKAO_REFRESH_TOKEN')
-        }
-        
-        missing_required = [key for key, value in required_keys.items() if not value]
-        missing_optional = [key for key, value in optional_keys.items() if not value]
-        
-        if missing_required:
-            print("❌ 필수 API 키가 설정되지 않았습니다:")
-            for key in missing_required:
-                print(f"   - {key}")
-            raise ValueError("필수 API 키가 누락되었습니다!")
-        
-        print("✅ 필수 API 키 확인 완료")
-        
-        if missing_optional:
-            print("⚠️ 선택 API 키 누락 (카카오 발송 비활성화):")
-            for key in missing_optional:
-                print(f"   - {key}")
-        else:
-            print("✅ 카카오 API 키 확인 완료")
-        
-        print()
-    
-    def collect_news(self) -> List[Dict]:
-        """
-        1단계: 네이버 뉴스 수집
-        - 7개 산업별로 2개씩 총 14개 수집
-        """
-        print("📡 [1단계] 뉴스 수집 시작...")
-        print("-" * 70)
-        
-        try:
-            news_list = self.news_collector.collect_news_by_industry(news_per_industry=2)
-            
-            if not news_list:
-                print("⚠️ 수집된 뉴스가 없습니다!")
-                return []
-            
-            print(f"\n✅ 수집 완료: {len(news_list)}개 뉴스")
-            
-            # 산업별 분포 출력
-            industries = {}
-            for news in news_list:
-                industry = news.get('industry', '기타')
-                industries[industry] = industries.get(industry, 0) + 1
-            
-            print("\n📊 산업별 분포:")
-            for industry, count in industries.items():
-                print(f"   • {industry}: {count}개")
-            
-            print("-" * 70 + "\n")
-            return news_list
-            
-        except Exception as e:
-            print(f"❌ 뉴스 수집 실패: {str(e)}")
-            traceback.print_exc()
-            return []
-    
-    def edit_news_with_ai(self, news_list: List[Dict]) -> List[Dict]:
-        """
-        2단계: Gemini AI로 뉴스 편집
-        - 요약 및 인사이트 추가
-        """
-        print("🤖 [2단계] Gemini AI 편집 시작...")
-        print("-" * 70)
-        
-        try:
-            edited_news = []
-            for idx, news in enumerate(news_list, 1):
-                print(f"   편집 중... ({idx}/{len(news_list)})")
-                edited = self.news_editor.edit_single_news(news)
-                edited_news.append(edited)
-            
-            print(f"\n✅ AI 편집 완료: {len(edited_news)}개")
-            print("-" * 70 + "\n")
-            return edited_news
-            
-        except Exception as e:
-            print(f"⚠️ AI 편집 실패 (원본 사용): {str(e)}")
-            traceback.print_exc()
-            print("-" * 70 + "\n")
-            return news_list
-    
-    def format_kakao_message(self, news_list: List[Dict]) -> str:
-        """
-        3단계: 카카오톡 메시지 포맷팅 (간결 버전)
-        """
-        print("📝 [3단계] 메시지 포맷팅...")
-        print("-" * 70)
-        
-        # 산업 이모지 매핑
-        industry_emoji = {
-            '조선': '🚢',
-            '반도체': '💾',
-            '철강': '🏭',
-            '금융': '💰',
-            '식품': '🍜',
-            '건설': '🏗️',
-            '바이오': '💊'
-        }
-        
-        # 헤더
-        today = datetime.now().strftime('%m월 %d일')
-        message = f"📰 산업뉴스 ({today})\n"
-        message += "━" * 25 + "\n\n"
-        
-        # 뉴스 아이템 (최대 10개)
-        for idx, news in enumerate(news_list[:10], 1):
-            industry = news.get('industry', '기타')
-            emoji = industry_emoji.get(industry, '📌')
-            title = news.get('title', '제목없음')
-            
-            # 제목 길이 제한
-            if len(title) > 35:
-                title = title[:32] + "..."
-            
-            message += f"{emoji} {title}\n"
-        
-        # 푸터
-        message += "\n━" * 25 + "\n"
-        message += "⏰ 매일 오전 8시 발송\n"
-        message += f"📊 총 {len(news_list)}개 산업뉴스"
-        
-        msg_length = len(message)
-        print(f"✅ 포맷팅 완료 ({msg_length}자)")
-        
-        if msg_length > 1000:
-            print(f"⚠️ 메시지가 너무 깁니다. 축소 중...")
-            message = self.format_short_message(news_list[:7])
-            print(f"✅ 축소 완료 ({len(message)}자)")
-        
-        print("-" * 70 + "\n")
-        return message
-    
-    def format_short_message(self, news_list: List[Dict]) -> str:
-        """초단축 메시지"""
-        today = datetime.now().strftime('%m.%d')
-        message = f"📰 산업뉴스 {today}\n\n"
-        
-        for idx, news in enumerate(news_list[:7], 1):
-            industry = news.get('industry', '기타')
-            title = news.get('title', '')[:30]
-            message += f"{idx}. [{industry}] {title}...\n"
-        
-        message += f"\n⏰ 매일 오전 8시 | {len(news_list)}개 뉴스"
-        return message
-    
-    def send_to_kakao(self, message: str) -> bool:
-        """
-        4단계: 카카오톡 발송
-        """
-        print("📤 [4단계] 카카오톡 발송...")
-        print("-" * 70)
-        
-        if not self.kakao_enabled:
-            print("⚠️ 카카오 발송 비활성화 (API 키 미설정)")
-            print("📝 메시지 미리보기:")
-            print("\n" + message + "\n")
-            print("-" * 70 + "\n")
-            return False
-        
-        try:
-            success = self.kakao_sender.send_message_to_me(message)
-            
-            if success:
-                print("✅ 발송 완료!")
-            else:
-                print("❌ 발송 실패")
-            
-            print("-" * 70 + "\n")
-            return success
-            
-        except Exception as e:
-            print(f"❌ 발송 오류: {str(e)}")
-            traceback.print_exc()
-            print("-" * 70 + "\n")
-            return False
-    
-    def run(self):
-        """메인 실행"""
-        try:
-            # 1. 뉴스 수집
-            news_list = self.collect_news()
-            if not news_list:
-                print("⚠️ 수집된 뉴스가 없어 종료합니다.")
-                return False
-            
-            # 2. AI 편집
-            edited_news = self.edit_news_with_ai(news_list)
-            
-            # 3. 메시지 포맷팅
-            message = self.format_kakao_message(edited_news)
-            
-            # 4. 카카오톡 발송
-            success = self.send_to_kakao(message)
-            
-            # 완료
-            print("="*70)
-            if success:
-                print("🎉 산업뉴스봇 실행 완료!")
-            else:
-                print("✅ 뉴스 수집 완료 (카카오 발송 스킵)")
-            print("="*70 + "\n")
-            
-            return True
-            
-        except Exception as e:
-            print(f"\n❌ 치명적 오류 발생: {str(e)}")
-            traceback.print_exc()
-            return False
+from kakao_sender import KakaoSender
 
 def main():
-    """메인 함수"""
-    bot = DailyNewsBot()
-    success = bot.run()
-    sys.exit(0 if success else 1)
+    print("=" * 50)
+    print("🚀 고용/채용 뉴스봇 시작")
+    print(f"실행 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 50)
+    
+    # 1단계: 네이버 뉴스 수집
+    print("\n[1/4] 📰 네이버 뉴스 수집 중...")
+    try:
+        collector = NaverNewsCollector(
+            client_id=os.environ['NAVER_CLIENT_ID'],
+            client_secret=os.environ['NAVER_CLIENT_SECRET']
+        )
+        raw_news = collector.collect_employment_news(count=20)
+        print(f"✓ 수집 완료: {len(raw_news)}개 뉴스")
+        
+        if not raw_news:
+            print("❌ 수집된 뉴스가 없습니다.")
+            return
+            
+    except Exception as e:
+        print(f"❌ 뉴스 수집 실패: {e}")
+        return
+    
+    # 2단계: Gemini AI 편집 (새 포맷 적용)
+    print("\n[2/4] 🤖 AI 편집 중...")
+    try:
+        editor = GeminiNewsEditor(
+            api_key=os.environ['GEMINI_API_KEY']
+        )
+        formatted_news = editor.format_news_with_recruitment_point(raw_news[:10])
+        print(f"✓ 편집 완료: {len(formatted_news)}개 뉴스")
+        
+        if not formatted_news:
+            print("⚠️ AI 편집 실패, 원본 데이터 사용")
+            formatted_news = raw_news[:10]
+            
+    except Exception as e:
+        print(f"⚠️ AI 편집 오류: {e}")
+        print("→ 원본 데이터 사용")
+        formatted_news = raw_news[:10]
+    
+    # 3단계: 메시지 포맷팅
+    print("\n[3/4] 📝 메시지 포맷팅 중...")
+    message = format_kakao_message(formatted_news)
+    print(f"✓ 메시지 길이: {len(message)}자")
+    
+    # 4단계: 카카오톡 발송
+    print("\n[4/4] 📤 카카오톡 발송 중...")
+    try:
+        sender = KakaoSender(
+            rest_api_key=os.environ['KAKAO_REST_API_KEY'],
+            refresh_token=os.environ['KAKAO_REFRESH_TOKEN']
+        )
+        
+        result = sender.send_message(message)
+        
+        if result:
+            print("✓ 발송 성공!")
+        else:
+            print("❌ 발송 실패")
+            
+    except Exception as e:
+        print(f"❌ 발송 오류: {e}")
+        return
+    
+    # 결과 저장
+    result_data = {
+        "timestamp": datetime.now().isoformat(),
+        "news_count": len(formatted_news),
+        "message_length": len(message),
+        "news": formatted_news
+    }
+    
+    with open('daily_news_result.json', 'w', encoding='utf-8') as f:
+        json.dump(result_data, f, ensure_ascii=False, indent=2)
+    
+    print("\n" + "=" * 50)
+    print("✅ 모든 작업 완료!")
+    print("=" * 50)
+
+def format_kakao_message(news_list):
+    """
+    새로운 포맷으로 카카오톡 메시지 생성
+    
+    [산업]
+    "뉴스 제목"
+    링크: https://...
+    채용포인트: 채용 관련 인사이트
+    """
+    
+    header = f"📰 오늘의 고용/채용 뉴스 ({datetime.now().strftime('%m월 %d일')})\n"
+    header += "=" * 30 + "\n\n"
+    
+    messages = []
+    
+    for i, news in enumerate(news_list, 1):
+        # 카테고리 결정 (뉴스 제목/설명 기반)
+        category = determine_category(news)
+        
+        msg = f"[{category}]\n"
+        msg += f'"{news.get("title", "제목 없음")}"\n'
+        msg += f'링크: {news.get("link", "")}\n'
+        
+        # 채용포인트 추가 (AI가 생성한 경우)
+        recruitment_point = news.get('recruitment_point', '')
+        if recruitment_point:
+            msg += f'채용포인트: {recruitment_point}\n'
+        
+        messages.append(msg)
+    
+    # 전체 메시지 조합
+    full_message = header + "\n".join(messages)
+    
+    # 1000자 제한 체크
+    if len(full_message) > 1000:
+        # 각 뉴스 항목을 축약
+        messages = []
+        for i, news in enumerate(news_list, 1):
+            category = determine_category(news)
+            title = news.get("title", "제목 없음")
+            link = news.get("link", "")
+            
+            # 제목이 너무 길면 축약
+            if len(title) > 40:
+                title = title[:37] + "..."
+            
+            msg = f"[{category}] {title}\n{link}\n"
+            messages.append(msg)
+        
+        full_message = header + "\n".join(messages)
+    
+    return full_message
+
+def determine_category(news):
+    """뉴스 내용을 분석해 산업 카테고리 결정"""
+    
+    title = news.get('title', '').lower()
+    description = news.get('description', '').lower()
+    content = f"{title} {description}"
+    
+    # 산업별 키워드
+    categories = {
+        '조선': ['조선', '현대중공업', '삼성중공업', 'lng선', '선박'],
+        '반도체': ['반도체', '삼성전자', 'sk하이닉스', '메모리', '칩'],
+        'IT': ['it', '소프트웨어', '개발자', '프로그래머', '코딩', '앱'],
+        '제조': ['제조', '공장', '생산직', '기계', '자동차'],
+        '서비스': ['서비스', '유통', '판매', '고객', '영업'],
+        '금융': ['금융', '은행', '증권', '보험', '투자'],
+        '건설': ['건설', '부동산', '건축', '토목', '인프라'],
+        '바이오': ['바이오', '제약', '의료', '헬스케어', '병원'],
+    }
+    
+    for category, keywords in categories.items():
+        if any(keyword in content for keyword in keywords):
+            return category
+    
+    return '기타'
 
 if __name__ == "__main__":
     main()
