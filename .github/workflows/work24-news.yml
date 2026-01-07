@@ -2,8 +2,8 @@ name: Work24 Job Bot (Hybrid)
 
 on:
   schedule:
-    # 매일 오전 10시 (KST) = 01시 (UTC)
-    - cron: '0 1 * * *'
+    # 매일 오전 11시 (KST) = 01시 (UTC)
+    - cron: '0 2 * * *'
   workflow_dispatch:
 
 jobs:
