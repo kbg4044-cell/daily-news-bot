@@ -1,0 +1,48 @@
+name: Work24 Job Bot
+
+on:
+  schedule:
+    # 매일 오전 10시 (KST) = 01시 (UTC)
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+
+jobs:
+  send-work24-jobs:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Setup Chrome
+      uses: browser-actions/setup-chrome@latest
+      with:
+        chrome-version: stable
+    
+    - name: Install ChromeDriver
+      run: |
+        CHROME_VERSION=$(google-chrome --version | awk '{print $3}' | cut -d '.' -f 1)
+        wget -q https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_VERSION} -O /tmp/chromedriver_version
+        CHROMEDRIVER_VERSION=$(cat /tmp/chromedriver_version)
+        wget -q https://chromedriver.storage.googleapis.com/${CHROMEDRIVER_VERSION}/chromedriver_linux64.zip
+        unzip -q chromedriver_linux64.zip
+        sudo mv chromedriver /usr/local/bin/
+        sudo chmod +x /usr/local/bin/chromedriver
+    
+    - name: Install dependencies
+      run: |
+        cd work24_bot
+        pip install --quiet -r requirements.txt
+    
+    - name: Run work24 job bot
+      env:
+        KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
+        KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
+      run: |
+        cd work24_bot
+        python daily_work24.py
