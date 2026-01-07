@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-고용24 크롤러 - 실시간 로그 출력 강화 버전 (flush=True)
+고용24 크롤러 - 카테고리별 순차 검색 & 원본 링크 추출 엔진
 """
 
 from selenium import webdriver
@@ -12,14 +12,16 @@ from selenium.webdriver.support import expected_conditions as EC
 from datetime import datetime
 import time
 import json
-from typing import Dict, List
 
 class Work24StealthCrawler:
     
     def __init__(self):
         self.driver = None
     
-    def setup_stealth_driver(self):
+    def setup_driver(self):
+        """드라이버 설정 (한 번만 실행)"""
+        if self.driver: return
+        
         options = Options()
         options.add_argument('--headless=new') 
         options.add_argument('--no-sandbox')
@@ -36,153 +38,141 @@ class Work24StealthCrawler:
         })
         self.driver.implicitly_wait(10)
 
-    def collect_jobs(self, max_jobs: int = 15) -> Dict[str, List[str]]:
-        if not self.driver:
-            self.setup_stealth_driver()
-        
-        categorized_jobs = {"대기업": [], "중견기업": [], "외국계": [], "강소기업": []}
+    def close(self):
+        """브라우저 종료"""
+        if self.driver:
+            self.driver.quit()
+            self.driver = None
+
+    def scrape_one_category(self, category_name, target_id, max_jobs=10):
+        """
+        특정 기업형태(target_id) 하나만 체크하고 검색하여 결과를 반환
+        """
+        self.setup_driver()
+        job_results = []
         
         try:
-            print(">>> [접속] 고용24 메인 페이지 이동...", flush=True)
-            url = "https://www.work24.go.kr/wk/a/b/1200/retriveDtlEmpSrchList.do"
-            self.driver.get(url)
-            wait = WebDriverWait(self.driver, 30)
-            time.sleep(3)
-
-            # [1] 상세 필터링
-            targets = [
-                "enterPriseGbnParam01", "enterPriseGbnParam05", "enterPriseGbnParam06", 
-                "enterPriseGbnParam07", "enterPriseGbnParam10", 
-                "b_siteClcdCJK", "b_siteClcdCSI", 
-                "employGbnParam10"
-            ]
+            print(f"\n>>> [시작] '{category_name}' 공고 검색 시작...", flush=True)
             
-            print(">>> [필터] 체크박스 설정 중...", flush=True)
-            js_filter = f"""
+            # 1. 초기화 (새로고침 효과를 위해 URL 재접속)
+            self.driver.get("https://www.work24.go.kr/wk/a/b/1200/retriveDtlEmpSrchList.do")
+            wait = WebDriverWait(self.driver, 20)
+            time.sleep(3) # 접속 대기
+
+            # 2. 필터 설정 (공통 필터 + 타겟 기업형태 1개)
+            # 공통: 잡코리아, 사람인, 정규직
+            common_ids = ["b_siteClcdCJK", "b_siteClcdCSI", "employGbnParam10"]
+            
+            # JS로 클릭 (안전하게)
+            js_script = f"""
+            // 더보기 열기
             const moreBtn = document.getElementById('moreBtn');
             if (moreBtn) moreBtn.click();
             
-            const targets = {json.dumps(targets)};
-            targets.forEach(id => {{
-                const checkbox = document.getElementById(id);
-                if (checkbox && !checkbox.checked) {{
-                    const label = document.querySelector(`label[for="${{id}}"]`);
-                    if (label) label.click();
+            // 1. 공통 필터 체크
+            const commons = {json.dumps(common_ids)};
+            commons.forEach(id => {{
+                const el = document.getElementById(id);
+                if (el && !el.checked) {{
+                    const lbl = document.querySelector(`label[for="${{id}}"]`);
+                    if (lbl) lbl.click();
                 }}
             }});
-            setTimeout(() => {{ fn_Search('1'); }}, 1000);
-            """
-            self.driver.execute_script(js_filter)
-            
-            print(">>> [로딩] 검색 결과 대기 중 (15초)...", flush=True)
-            time.sleep(15) 
 
-            # [2] 공고 찾기
+            // 2. 타겟 기업형태(대기업/중견 등) 하나만 체크
+            const target = document.getElementById('{target_id}');
+            if (target && !target.checked) {{
+                const lbl = document.querySelector(`label[for="{target_id}"]`);
+                if (lbl) lbl.click();
+            }}
+
+            // 3. 검색 실행
+            setTimeout(() => {{ fn_Search('1'); }}, 500);
+            """
+            self.driver.execute_script(js_script)
+            
+            print(f">>> [로딩] '{category_name}' 검색 결과 대기 중 (10초)...", flush=True)
+            time.sleep(10) # 충분한 대기
+
+            # 3. 결과 수집
             rows = self.driver.find_elements(By.CSS_SELECTOR, "table.table-list tbody tr")
             if len(rows) == 0:
-                print("⚠️ [경고] 테이블 못 찾음. 전체 검색 시도.", flush=True)
+                print("⚠️ 테이블 못 찾음. 전체 검색 시도.", flush=True)
                 rows = self.driver.find_elements(By.TAG_NAME, "tr")
 
-            print(f"👉 [DEBUG] 화면에서 발견된 총 행(Row) 수: {len(rows)}개", flush=True)
+            print(f"👉 [DEBUG] 발견된 행(Row): {len(rows)}개", flush=True)
             
-            if len(rows) == 0:
-                body_text = self.driver.find_element(By.TAG_NAME, "body").text[:500]
-                print(f"❌ [오류] 공고 0개. 화면 요약:\n{body_text}", flush=True)
-                return categorized_jobs
-
-            # [3] 데이터 수집
-            main_window = self.driver.current_window_handle
-            
+            # 날짜 포맷
             now = datetime.now()
-            today_formats = [
-                now.strftime("%y.%m.%d"), now.strftime("%Y.%m.%d"), 
-                now.strftime("%Y-%m-%d"), now.strftime("%m-%d")
-            ]
+            today_formats = [now.strftime(f) for f in ["%y.%m.%d", "%Y.%m.%d", "%Y-%m-%d", "%m-%d"]]
             
+            main_window = self.driver.current_window_handle
             count = 0
+
             for i, row in enumerate(rows, 1):
                 if count >= max_jobs: break
                 
                 try:
-                    row_text = row.text.strip()
-                    if not row_text: 
-                        continue
+                    text = row.text.strip()
+                    if not text: continue # 빈 줄 패스
 
                     # 날짜 확인
                     try:
                         reg_date = row.find_element(By.CLASS_NAME, "date").text.strip()
                     except:
-                        reg_date = row_text
-
-                    is_today = any(fmt in reg_date for fmt in today_formats)
-                    if not is_today: 
-                        # print(f"   🚫 [탈락 {i}] 날짜 아님", flush=True) # 로그가 너무 많으면 주석 처리
-                        continue
-
-                    # 카테고리 확인
-                    category = None
-                    if "대기업" in row_text: category = "대기업"
-                    elif "중견" in row_text: category = "중견기업"
-                    elif "외국계" in row_text: category = "외국계"
-                    elif "강소" in row_text: category = "강소기업"
+                        reg_date = text
                     
-                    if not category: 
-                        continue
+                    if not any(f in reg_date for f in today_formats):
+                        continue # 오늘 거 아니면 패스
 
-                    # [4] 상세 링크 추출 (여기가 시간이 걸리는 구간)
-                    print(f"   ⏳ [처리중 {i}] {category} 상세 페이지 진입...", end='', flush=True)
+                    # [중요] 카테고리가 섞여 나올 수 있으므로 더블 체크
+                    # (예: 대기업 검색했는데 계열사 중소기업이 나올 수도 있음 -> 그래도 검색결과 존중)
+                    
+                    # 상세 정보 추출
+                    print(f"   ⏳ [처리중] 상세 페이지 진입...", end='', flush=True)
+                    
+                    title_el = row.find_element(By.CSS_SELECTOR, "a[data-emp-detail]")
+                    title = title_el.text.strip()
+                    detail_url = title_el.get_attribute("href")
                     
                     try:
-                        title_el = row.find_element(By.CSS_SELECTOR, "a[data-emp-detail]")
-                        title = title_el.text.strip()
-                        detail_url = title_el.get_attribute("href")
-                        
-                        try:
-                            company = row.find_element(By.CLASS_NAME, "cp_name").text.strip()
-                        except:
-                            company = "회사명"
+                        company = row.find_element(By.CLASS_NAME, "cp_name").text.strip()
+                    except:
+                        company = category_name
 
-                        self.driver.execute_script(f"window.open('{detail_url}');")
-                        self.driver.switch_to.window(self.driver.window_handles[-1])
-                        
+                    # 4. 원본 링크 추출 (새 창)
+                    self.driver.execute_script(f"window.open('{detail_url}');")
+                    self.driver.switch_to.window(self.driver.window_handles[-1])
+                    
+                    try:
                         wait_btn = WebDriverWait(self.driver, 5)
                         final_btn = wait_btn.until(EC.presence_of_element_located(
                             (By.XPATH, "//a[contains(@onclick, 'f_goMove')]")
                         ))
                         actual_link = final_btn.get_attribute("onclick").split("'")[1]
+                    except:
+                        actual_link = detail_url
 
-                    except Exception as e:
-                        actual_link = detail_url if 'detail_url' in locals() else "링크없음"
-                        if len(self.driver.window_handles) > 1:
-                            self.driver.close()
-                            self.driver.switch_to.window(main_window)
-                    
                     job_info = f"🏢 {company}\n📌 {title}\n🔗 바로가기: {actual_link}"
-                    categorized_jobs[category].append(job_info)
+                    job_results.append(job_info)
                     count += 1
                     print(f" 완료! ({company})", flush=True)
 
+                    # 탭 닫기
                     if len(self.driver.window_handles) > 1:
                         self.driver.close()
                     self.driver.switch_to.window(main_window)
-                    
-                    # 너무 빠르면 차단될 수 있으니 짧게 대기
                     time.sleep(0.5)
 
-                except Exception as e:
-                    print(f" 에러({e})", flush=True)
+                except Exception:
                     if len(self.driver.window_handles) > 1:
                         self.driver.close()
                         self.driver.switch_to.window(main_window)
                     continue
             
-            print(f">>> [완료] 총 {count}개의 공고 수집됨", flush=True)
+            print(f"✅ [완료] '{category_name}' 수집: {count}건", flush=True)
             
         except Exception as e:
-            print(f">>> [오류] 크롤링 전체 실패: {e}", flush=True)
+            print(f"❌ [에러] '{category_name}' 처리 중 실패: {e}", flush=True)
         
-        finally:
-            if self.driver:
-                self.driver.quit()
-        
-        return categorized_jobs
+        return job_results
