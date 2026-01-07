@@ -1,51 +1,61 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-고용24 채용공고 크롤러
+고용24 크롤러 - Stealth 모드 (봇 감지 우회)
 """
 
-import time
-import datetime
-from typing import Dict, List
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
+from datetime import datetime
+import time
+from typing import Dict, List
 
-class Work24Crawler:
-    """고용24 채용공고 크롤러"""
+class Work24StealthCrawler:
+    """봇 감지 우회 크롤러"""
     
-    def __init__(self, headless: bool = True):
-        self.headless = headless
+    def __init__(self):
         self.driver = None
     
-    def setup_driver(self):
-        """Chrome 드라이버 설정"""
+    def setup_stealth_driver(self):
+        """봇 감지 우회 설정"""
         
         options = Options()
         
-        if self.headless:
-            options.add_argument('--headless')
-        
+        # Headless 설정
+        options.add_argument('--headless=new')  # 새 headless 모드
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--disable-gpu')
-        options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+        options.add_argument('--disable-blink-features=AutomationControlled')
+        
+        # 봇 감지 우회
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option('useAutomationExtension', False)
+        
+        # User Agent
+        options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+        
+        # 창 크기
+        options.add_argument('--window-size=1920,1080')
         
         self.driver = webdriver.Chrome(options=options)
+        
+        # WebDriver 속성 숨기기 (JavaScript 실행)
+        self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
+            'source': '''
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
+            '''
+        })
+        
         self.driver.implicitly_wait(10)
     
     def collect_jobs(self, max_jobs: int = 15) -> Dict[str, List[str]]:
-        """
-        고용24에서 채용공고 수집
-        
-        Returns:
-            카테고리별 채용공고 딕셔너리
-        """
+        """채용공고 수집"""
         
         if not self.driver:
-            self.setup_driver()
+            self.setup_stealth_driver()
         
         categorized_jobs = {
             "대기업": [],
@@ -55,51 +65,36 @@ class Work24Crawler:
         }
         
         try:
-            # 1. 고용24 접속
             url = "https://www.work24.go.kr/wk/a/b/1200/retriveDtlEmpSrchList.do"
             self.driver.get(url)
             
-            wait = WebDriverWait(self.driver, 15)
+            # 페이지 로드 대기
+            time.sleep(3)
             
-            # 2. 추가 검색조건 열기
-            try:
-                expand_btn = wait.until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, "button.btn-search-open, a.btn-more"))
-                )
-                self.driver.execute_script("arguments[0].click();", expand_btn)
-                time.sleep(1)
-            except:
-                print("  추가 검색조건 버튼 없음 (이미 열려있음)")
+            # JavaScript로 검색 조건 설정
+            js_script = """
+            // 대기업, 중견, 외국계, 강소 체크박스 클릭
+            const labels = ['대기업', '중견기업', '외국계기업', '강소기업'];
+            labels.forEach(label => {
+                const checkbox = document.querySelector(`label:contains('${label}') input[type='checkbox']`);
+                if (checkbox && !checkbox.checked) {
+                    checkbox.click();
+                }
+            });
             
-            # 3. 기업 규모 필터 체크
-            filter_labels = ["대기업", "중견기업", "외국계기업", "강소기업", "벤처기업", "상장기업", "우수기업", "일반기업"]
+            // 검색 버튼 클릭
+            const searchBtn = document.querySelector('button.btn-search, button[type="submit"]');
+            if (searchBtn) {
+                searchBtn.click();
+            }
+            """
             
-            for label in filter_labels:
-                try:
-                    checkbox = self.driver.find_element(
-                        By.XPATH, 
-                        f"//label[contains(text(), '{label}')]/input[@type='checkbox']"
-                    )
-                    if not checkbox.is_selected():
-                        self.driver.execute_script("arguments[0].click();", checkbox)
-                except:
-                    pass
-            
-            time.sleep(1)
-            
-            # 4. 검색 버튼 클릭
-            search_btn = self.driver.find_element(By.CSS_SELECTOR, "button.btn-search, button[type='submit']")
-            self.driver.execute_script("arguments[0].click();", search_btn)
-            
+            self.driver.execute_script(js_script)
             time.sleep(2)
             
-            # 5. 결과 수집
-            today = datetime.datetime.now().strftime("%y.%m.%d")
-            main_window = self.driver.current_window_handle
-            
+            # 결과 수집 (이전과 동일)
+            today = datetime.now().strftime("%y.%m.%d")
             rows = self.driver.find_elements(By.CSS_SELECTOR, "table tbody tr, ul.job-list li")
-            
-            print(f"  채용공고 발견: {len(rows)}개")
             
             count = 0
             for row in rows:
@@ -107,22 +102,19 @@ class Work24Crawler:
                     break
                 
                 try:
-                    # 날짜 확인
                     date_el = row.find_element(By.CSS_SELECTOR, ".date, .reg-date")
                     reg_date = date_el.text.strip()
                     
                     if today not in reg_date:
                         continue
                     
-                    # 기업명 및 제목
                     company = row.find_element(By.CSS_SELECTOR, ".cp_name, .company-name").text.strip()
                     title_el = row.find_element(By.CSS_SELECTOR, "a.title, a.job-title")
                     title = title_el.text.strip()
+                    job_link = title_el.get_attribute("href")
                     
-                    # 카테고리 라벨
                     labels = [l.text.strip() for l in row.find_elements(By.CSS_SELECTOR, ".tbl_label, .badge")]
                     
-                    # 카테고리 매칭
                     category = None
                     if any("대기업" in l for l in labels):
                         category = "대기업"
@@ -136,18 +128,13 @@ class Work24Crawler:
                     if not category:
                         continue
                     
-                    # 링크 추출
-                    job_link = title_el.get_attribute("href")
-                    
-                    # 포맷팅
                     job_info = f"🏢 {company}\n📌 {title}\n🔗 {job_link}"
-                    
                     categorized_jobs[category].append(job_info)
                     count += 1
                     
                     print(f"    ✓ [{category}] {company} - {title[:20]}...")
                     
-                except Exception as e:
+                except Exception:
                     continue
             
             print(f"  수집 완료: 총 {count}개")
@@ -160,8 +147,3 @@ class Work24Crawler:
                 self.driver.quit()
         
         return categorized_jobs
-    
-    def close(self):
-        """드라이버 종료"""
-        if self.driver:
-            self.driver.quit()
