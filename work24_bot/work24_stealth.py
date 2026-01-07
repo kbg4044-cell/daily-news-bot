@@ -23,25 +23,29 @@ class Work24StealthCrawler:
     def setup_stealth_driver(self):
         """Selenium Stealth 설정 (GitHub Actions 호환)"""
         options = Options()
-        options.add_argument('--headless=new')
+        options.add_argument('--headless=new')  # 새 headless 모드
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
         options.add_argument('--disable-blink-features=AutomationControlled')
+        
+        # 봇 감지 우회 설정
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option('useAutomationExtension', False)
+        
+        # User Agent 및 창 크기 설정
         options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
         options.add_argument('--window-size=1920,1080')
         
         self.driver = webdriver.Chrome(options=options)
         
-        # WebDriver 속성 변조 방지
+        # WebDriver 속성 숨기기 (JavaScript 실행)
         self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
             'source': 'Object.defineProperty(navigator, "webdriver", {get: () => undefined})'
         })
         self.driver.implicitly_wait(10)
 
     def collect_jobs(self, max_jobs: int = 15) -> Dict[str, List[str]]:
-        """상세 필터를 적용하여 채용공고 수집 및 원본 링크 추출"""
+        """채용공고 수집 및 원본 링크 추출"""
         if not self.driver:
             self.setup_stealth_driver()
         
@@ -61,7 +65,6 @@ class Work24StealthCrawler:
                 "employGbnParam10" # 고용형태 (정규직)
             ]
             
-            # targets 리스트를 JS 배열 형태로 변환하여 전달
             js_filter = f"""
             const moreBtn = document.getElementById('moreBtn');
             if (moreBtn) moreBtn.click();
@@ -78,7 +81,7 @@ class Work24StealthCrawler:
             setTimeout(() => {{ fn_Search('1'); }}, 500);
             """
             self.driver.execute_script(js_filter)
-            time.sleep(5) # 검색 결과 로딩 대기
+            time.sleep(5) 
 
             # [2] 오늘 날짜 공고 필터링 및 리스트 순회
             today = datetime.now().strftime("%y.%m.%d")
@@ -91,14 +94,13 @@ class Work24StealthCrawler:
                     break
                 
                 try:
-                    # 오늘 등록된 공고인지 체크
+                    # 날짜 확인
                     reg_date = row.find_element(By.CLASS_NAME, "date").text.strip()
                     if today not in reg_date:
                         continue
 
-                    # 기업 규모 확인 (라벨 텍스트)
+                    # 기업 규모 확인 및 카테고리 매칭
                     labels = [l.text.strip() for l in row.find_elements(By.CLASS_NAME, "tbl_label")]
-                    
                     category = None
                     if "대기업" in labels: category = "대기업"
                     elif "중견" in labels: category = "중견기업"
@@ -118,36 +120,32 @@ class Work24StealthCrawler:
                     self.driver.execute_script(f"window.open('{detail_url}');")
                     self.driver.switch_to.window(self.driver.window_handles[-1])
                     
-                    # '바로가기' 버튼의 onclick 속성에서 실제 URL 파싱
                     btn_wait = WebDriverWait(self.driver, 7)
                     final_btn = btn_wait.until(EC.presence_of_element_located(
                         (By.XPATH, "//a[contains(@onclick, 'f_goMove')]")
                     ))
                     
                     onclick_val = final_btn.get_attribute("onclick")
-                    # f_goMove('URL') 형태에서 URL만 추출
                     actual_link = onclick_val.split("'")[1]
 
                     job_info = f"🏢 {company}\n📌 {title}\n🔗 바로가기: {actual_link}"
                     categorized_jobs[category].append(job_info)
                     count += 1
 
-                    # 현재 상세 창 닫고 메인 리스트로 복귀
                     self.driver.close()
                     self.driver.switch_to.window(main_window)
-                    time.sleep(1) # 차단 방지용 지연
+                    time.sleep(1)
 
-                except Exception as e:
-                    # 에러 발생 시 현재 상세 페이지 창이 열려있다면 닫고 복귀
+                except Exception:
                     if len(self.driver.window_handles) > 1:
                         self.driver.close()
                         self.driver.switch_to.window(main_window)
                     continue
             
-            print(f"  [성공] 총 {count}개의 타겟 공고 수집 완료")
+            print(f"  수집 완료: 총 {count}개")
             
         except Exception as e:
-            print(f"  [오류] 크롤링 중 치명적 에러: {e}")
+            print(f"  크롤링 오류: {e}")
         
         finally:
             if self.driver:
